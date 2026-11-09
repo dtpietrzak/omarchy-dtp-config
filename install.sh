@@ -244,7 +244,7 @@ def widget_id(entry):
     return None
 
 def is_workspace(widget):
-    return widget in {"omarchy.workspaces", "dtpietrzak.workspacecontrol"} or (
+    return widget in {"omarchy.workspaces", "io.github.dtpietrzak.workspace-control"} or (
         isinstance(widget, str) and widget.endswith(".workspaces")
     )
 
@@ -482,8 +482,64 @@ case "$floating_status" in
     ;;
 esac
 
-if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 1 ]]; then
-  if [[ $input_changed -eq 1 || $floating_changed -eq 1 ]]; then
+echo "==> workspace control"
+WORKSPACE_PLUGIN="io.github.dtpietrzak.workspace-control"
+OLD_WORKSPACE_PLUGIN="dtpietrzak.workspacecontrol"
+OLD_WORKSPACE_GESTURE="$HOME/.config/hypr/workspace-control.lua"
+workspace_changed=0
+
+# Before 2.0 the gesture was installed into the Hyprland config, where it would
+# hold the gesture the plugin now registers itself.
+if [[ -f $OLD_WORKSPACE_GESTURE ]] || grep -qxF 'require("hypr.workspace-control")' "$HYPRLAND"; then
+  rm -f "$OLD_WORKSPACE_GESTURE"
+  sed -i -e '/^-- Four finger workspace control panel (omarchy-dtp-workspace-control)\.$/d' \
+    -e '/^require("hypr\.workspace-control")$/d' "$HYPRLAND"
+  echo "Removed the old workspace gesture from the Hyprland config"
+  workspace_changed=1
+fi
+
+if [[ -d "$HOME/.config/omarchy/plugins/$WORKSPACE_PLUGIN" ]]; then
+  WORKSPACE_SETTINGS="$HOME/.config/omarchy/$WORKSPACE_PLUGIN.json"
+
+  # The plugin was renamed, and its settings file with it.
+  if [[ -d "$HOME/.config/omarchy/plugins/$OLD_WORKSPACE_PLUGIN" ]]; then
+    omarchy plugin remove "$OLD_WORKSPACE_PLUGIN" --yes
+    if [[ -f "$HOME/.config/omarchy/$OLD_WORKSPACE_PLUGIN.json" && ! -f $WORKSPACE_SETTINGS ]]; then
+      mv "$HOME/.config/omarchy/$OLD_WORKSPACE_PLUGIN.json" "$WORKSPACE_SETTINGS"
+    fi
+  fi
+
+  # The plugin leaves its hotkeys off until asked. These are wanted here.
+  hotkeys_added="$(python3 - "$WORKSPACE_SETTINGS" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+file = Path(sys.argv[1])
+settings = json.loads(file.read_text()) if file.is_file() else {}
+if "hotkeys" in settings:
+    print(0)
+else:
+    settings["hotkeys"] = True
+    file.write_text(json.dumps(settings, indent=2) + "\n")
+    print(1)
+PY
+)"
+  if [[ $hotkeys_added -eq 1 ]]; then
+    echo "Turned on the workspace hotkeys"
+    workspace_changed=1
+  fi
+
+  # The widget brings its own workspace numbers, so the stock ones would be a
+  # second row of the same thing.
+  if grep -qF "\"$WORKSPACE_PLUGIN\"" "$SHELL_JSON" && plugin_enabled omarchy.workspaces; then
+    omarchy plugin disable omarchy.workspaces
+    echo "Turned off the stock workspace widget"
+  fi
+fi
+
+if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 1 || $workspace_changed -eq 1 ]]; then
+  if [[ $input_changed -eq 1 || $floating_changed -eq 1 || $workspace_changed -eq 1 ]]; then
     hyprctl reload >/dev/null
     errors="$(hyprctl configerrors 2>&1 || true)"
     if [[ -n ${errors//[[:space:]]/} ]]; then

@@ -244,6 +244,7 @@ printf 'bottom\n' >"$HOME/.dock-position"
 printf 'off\n' >"$HOME/.dock-autohide"
 printf 'foot\n' >"$HOME/.dock-pinned"
 printf '24\n' >"$HOME/.cursor-size"
+mkdir -p "$HOME/.config/omarchy/plugins/io.github.dtpietrzak.workspace-control"
 cat >"$HOME/.config/omarchy/shell.json" <<'EOF'
 {
   "version": 1,
@@ -251,7 +252,7 @@ cat >"$HOME/.config/omarchy/shell.json" <<'EOF'
     "layout": {
       "left": [
         {"id": "dtpietrzak.menu"},
-        {"id": "dtpietrzak.workspacecontrol"}
+        {"id": "io.github.dtpietrzak.workspace-control"}
       ]
     }
   }
@@ -267,6 +268,7 @@ grep -qx 'hl.gesture({ fingers = 4, direction = "horizontal", action = "workspac
 grep -q 'hl.env("XCURSOR_SIZE", "20")' "$INPUT" || fail "cursor size was not written"
 grep -c -F 'hl.env("XCURSOR_SIZE"' "$INPUT" | grep -qx 1 || fail "cursor size was written more than once"
 grep -q 'warp_on_change_workspace = 0' "$INPUT" || fail "mouse setting was not written"
+grep -q '"hotkeys": true' "$HOME/.config/omarchy/io.github.dtpietrzak.workspace-control.json" || fail "workspace hotkeys were not turned on"
 grep -c -F 'warp_on_change_workspace' "$INPUT" | grep -qx 1 || fail "mouse setting was written more than once"
 grep -qx -- '--disable-features=AcceleratedVideoDecoder' "$FLAGS" || fail "chromium flag was not written"
 grep -qx 'reload' "$HOME/.hyprctl-log" || fail "hyprctl reload was not run"
@@ -287,7 +289,7 @@ python3 - "$HOME/.config/omarchy/shell.json" <<'PY' || fail "the workspace gap w
 import json, sys
 left = json.load(open(sys.argv[1]))["bar"]["layout"]["left"]
 ids = [entry["id"] for entry in left]
-assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "dtpietrzak.workspacecontrol"], ids
+assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "io.github.dtpietrzak.workspace-control"], ids
 assert left[1]["size"] == 12
 PY
 if grep -q 'disable omarchy.weather' "$HOME/.plugin-disable-log"; then
