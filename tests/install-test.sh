@@ -138,14 +138,19 @@ sys.exit(0 if ok else 1)
 ' "$id"
 EOF
 
-chmod +x "$tmpdir/bin/hyprctl" "$tmpdir/bin/gsettings" "$tmpdir/bin/omarchy" "$tmpdir/bin/jq"
+cat >"$tmpdir/bin/pkill" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$HOME/.pkill-log"
+exit 0
+EOF
+chmod +x "$tmpdir/bin/hyprctl" "$tmpdir/bin/gsettings" "$tmpdir/bin/omarchy" "$tmpdir/bin/jq" "$tmpdir/bin/pkill"
 export PATH="$tmpdir/bin:$PATH"
 
 INPUT="$HOME/.config/hypr/input.lua"
 FLAGS="$HOME/.config/chromium-flags.conf"
 
 reset_logs() {
-  rm -f "$HOME/.hyprctl-log" "$HOME/.gsettings-log" "$HOME/.omarchy-log" "$HOME/.plugin-disable-log"
+  rm -f "$HOME/.hyprctl-log" "$HOME/.gsettings-log" "$HOME/.omarchy-log" "$HOME/.plugin-disable-log" "$HOME/.pkill-log"
 }
 
 assert_quiet_hypr() {
@@ -199,18 +204,31 @@ mkdir -p "$HOME/.config/alacritty" "$HOME/.config/foot" "$HOME/.config/kitty" "$
 printf 'size = 8\n' >"$HOME/.config/alacritty/alacritty.toml"
 printf 'font=JetBrainsMono Nerd Font:size=8\n' >"$HOME/.config/foot/foot.ini"
 printf 'font_size 8.0\n' >"$HOME/.config/kitty/kitty.conf"
-printf 'font-size = 8\n' >"$HOME/.config/ghostty/config"
+printf 'font-size = 10\n' >"$HOME/.config/ghostty/config"
 printf '[font]\nbase-size = 10\n' >"$HOME/.config/omarchy/shell.toml"
 printf '[]\n' >"$HOME/.plugins"
 reset_logs
 "$ROOT/install.sh" >/dev/null
 [[ "$(cat "$INPUT")" == "$before_input" ]] || fail "the second run changed input.lua"
 [[ "$(cat "$FLAGS")" == "$before_flags" ]] || fail "the second run changed chromium flags"
+[[ "$(cat "$HOME/.config/ghostty/config")" == "font-size = 10" ]] || fail "the second run changed Ghostty"
 assert_quiet_hypr
 [[ ! -f $HOME/.gsettings-log ]] || fail "gsettings ran when the cursor size already matched"
+[[ ! -f $HOME/.pkill-log ]] || fail "Ghostty was signaled when its font size already matched"
 if grep -E -q 'position bottom|position left|autohide on|text size 10|bar set ' "$HOME/.omarchy-log"; then
   fail "a setting that already matched was written again: $(cat "$HOME/.omarchy-log")"
 fi
+
+# Ghostty is restored to 10pt without running the text-size command, which
+# would put it back at 8pt with the other terminals.
+printf 'font-size = 8\n' >"$HOME/.config/ghostty/config"
+reset_logs
+"$ROOT/install.sh" >/dev/null
+[[ "$(cat "$HOME/.config/ghostty/config")" == "font-size = 10" ]] || fail "Ghostty was not restored to 10pt"
+if grep -q 'display text size 10' "$HOME/.omarchy-log"; then
+  fail "restoring Ghostty reran the text-size command"
+fi
+grep -qx -- '-SIGUSR2 ghostty' "$HOME/.pkill-log" || fail "Ghostty was not asked to reload: $(cat "$HOME/.pkill-log" 2>/dev/null)"
 
 # An older cursor size in the same block is replaced, and the lines around it stay.
 cat >"$INPUT" <<'EOF'

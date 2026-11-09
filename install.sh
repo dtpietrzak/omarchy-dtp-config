@@ -16,6 +16,8 @@ CLOCK_FORMAT="ddd d MMM h:mm AP"
 TEXT_PX=10
 # omarchy display text size maps 12px to 9pt. 10px lands on 8pt.
 TEXT_PT=8
+# Ghostty stays one step larger than the other terminals.
+GHOSTTY_PT=10
 
 fail() {
   echo "install: $*" >&2
@@ -269,15 +271,28 @@ if [[ -f $HOME/.config/kitty/kitty.conf ]] &&
   ! grep -qE '^[[:space:]]*font_size[[:space:]]+'"$TEXT_PT"'\.0[[:space:]]*$' "$HOME/.config/kitty/kitty.conf"; then
   terminal_needs_size=1
 fi
-if [[ -f $HOME/.config/ghostty/config ]] &&
-  ! grep -qE '^font-size = '"$TEXT_PT"'$' "$HOME/.config/ghostty/config"; then
-  terminal_needs_size=1
-fi
 
 if [[ $base_size == "$TEXT_PX" && $terminal_needs_size -eq 0 ]]; then
   echo "Text size is already ${TEXT_PX}px"
 else
   omarchy display text size "$TEXT_PX"
+fi
+
+# The text-size command writes the same point size into every terminal, which
+# puts Ghostty at 8pt. This machine keeps Ghostty at 10pt.
+ghostty_config="$HOME/.config/ghostty/config"
+if [[ -f $ghostty_config ]]; then
+  if grep -qE '^font-size = '"$GHOSTTY_PT"'$' "$ghostty_config"; then
+    echo "Ghostty font size is already ${GHOSTTY_PT}pt"
+  else
+    if grep -qE '^font-size = ' "$ghostty_config"; then
+      sed -i -E "s/^font-size = .*/font-size = $GHOSTTY_PT/" "$ghostty_config"
+    else
+      printf '\nfont-size = %s\n' "$GHOSTTY_PT" >>"$ghostty_config"
+    fi
+    pkill -SIGUSR2 ghostty 2>/dev/null || true
+    echo "Ghostty font size set to ${GHOSTTY_PT}pt"
+  fi
 fi
 
 cursor_now="$(gsettings get org.gnome.desktop.interface cursor-size | awk '{print $NF}')"
