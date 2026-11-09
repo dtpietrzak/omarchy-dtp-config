@@ -2,6 +2,8 @@
 
 Personal Omarchy settings. `omarchy-dtp-install` runs this after the other features.
 
+![The desktop with the personal cursor and text sizes](screenshots/config.png)
+
 The app list, the hidden dock, and the floating title-bar limits stay in their own repos. This one is the rest of the desktop settings.
 
 ## Settings
