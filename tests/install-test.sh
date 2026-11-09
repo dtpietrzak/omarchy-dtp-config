@@ -109,9 +109,70 @@ if [[ $1 == display && $2 == text && $3 == size ]]; then
   printf '%s\n' "$4" >"$HOME/.text-px"
   exit 0
 fi
+if [[ $1 == bar && ( $2 == put || $2 == move || $2 == set ) && $3 == omarchy.spacer ]]; then
+  spacer-state "$HOME/.config/omarchy/shell.json" "$@"
+  exit 0
+fi
 echo "unexpected omarchy: $*" >&2
 exit 1
 EOF
+
+# The stub's $HOME is the temp root, so the helper lives beside the other fakes.
+cat >"$tmpdir/bin/spacer-state" <<'PY'
+#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+args = sys.argv[2:]
+data = json.loads(path.read_text())
+left = data.setdefault("bar", {}).setdefault("layout", {}).setdefault("left", [])
+
+def widget_id(entry):
+    return entry.get("id") if isinstance(entry, dict) else None
+
+def find_spacer():
+    for section, widgets in data["bar"]["layout"].items():
+        if not isinstance(widgets, list):
+            continue
+        for index, entry in enumerate(widgets):
+            if widget_id(entry) == "omarchy.spacer":
+                return section, index
+    return None
+
+def after_index(anchor):
+    for index, entry in enumerate(left):
+        if widget_id(entry) == anchor:
+            return index + 1
+    raise SystemExit(f"missing anchor {anchor}")
+
+op = args[1]
+if op in {"put", "move"}:
+    anchor = args[args.index("--after") + 1]
+    if op == "put":
+        if find_spacer() is None:
+            left.insert(after_index(anchor), {"id": "omarchy.spacer"})
+    else:
+        found = find_spacer()
+        if found is None:
+            raise SystemExit("cannot move spacer")
+        section, index = found
+        entry = data["bar"]["layout"][section].pop(index)
+        left.insert(after_index(anchor), entry)
+elif op == "set":
+    if "--json" not in args:
+        raise SystemExit("spacer size was not passed as JSON")
+    index = int(args[args.index("--index") + 1])
+    if widget_id(left[index]) != "omarchy.spacer":
+        raise SystemExit(f"index {index} is not the spacer")
+    left[index]["size"] = json.loads(args[4])
+else:
+    raise SystemExit("unhandled spacer command: " + " ".join(args))
+
+path.write_text(json.dumps(data, indent=2) + "\n")
+PY
+chmod +x "$tmpdir/bin/spacer-state"
 
 cat >"$tmpdir/bin/jq" <<'EOF'
 #!/usr/bin/env bash
@@ -175,11 +236,25 @@ printf 'bottom\n' >"$HOME/.dock-position"
 printf 'off\n' >"$HOME/.dock-autohide"
 printf 'foot\n' >"$HOME/.dock-pinned"
 printf '24\n' >"$HOME/.cursor-size"
+cat >"$HOME/.config/omarchy/shell.json" <<'EOF'
+{
+  "version": 1,
+  "bar": {
+    "layout": {
+      "left": [
+        {"id": "dtpietrzak.menu"},
+        {"id": "io.github.sanchokusika.workspace-styler"}
+      ]
+    }
+  }
+}
+EOF
 reset_logs
 
 "$ROOT/install.sh" >/dev/null
 grep -q 'scroll_factor = 0.3' "$INPUT" || fail "touchpad scroll factor was not written"
 grep -q 'natural_scroll = true' "$INPUT" || fail "natural scroll was not written"
+grep -q 'tap_and_drag = false' "$INPUT" || fail "double-tap-to-drag was not turned off"
 grep -qx 'hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })' "$INPUT" || fail "4-finger gesture was not written"
 grep -q 'hl.env("XCURSOR_SIZE", "20")' "$INPUT" || fail "cursor size was not written"
 grep -c -F 'hl.env("XCURSOR_SIZE"' "$INPUT" | grep -qx 1 || fail "cursor size was written more than once"
@@ -193,6 +268,13 @@ grep -q 'display text size 10' "$HOME/.omarchy-log" || fail "text size was not s
 grep -q 'disable omarchy.indicators' "$HOME/.plugin-disable-log" || fail "indicators were not disabled"
 grep -q 'dock position left' "$HOME/.omarchy-log" || fail "dock position was not set"
 grep -q 'dock autohide on' "$HOME/.omarchy-log" || fail "dock autohide was not set"
+python3 - "$HOME/.config/omarchy/shell.json" <<'PY' || fail "the workspace gap was not added"
+import json, sys
+left = json.load(open(sys.argv[1]))["bar"]["layout"]["left"]
+ids = [entry["id"] for entry in left]
+assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "io.github.sanchokusika.workspace-styler"], ids
+assert left[1]["size"] == 12
+PY
 if grep -q 'disable omarchy.weather' "$HOME/.plugin-disable-log"; then
   fail "a widget that was already off was disabled again"
 fi
@@ -217,6 +299,9 @@ assert_quiet_hypr
 [[ ! -f $HOME/.pkill-log ]] || fail "Ghostty was signaled when its font size already matched"
 if grep -E -q 'position bottom|position left|autohide on|text size 10|bar set ' "$HOME/.omarchy-log"; then
   fail "a setting that already matched was written again: $(cat "$HOME/.omarchy-log")"
+fi
+if grep -E -q 'bar (put|move) omarchy.spacer' "$HOME/.omarchy-log"; then
+  fail "the workspace gap was placed again: $(cat "$HOME/.omarchy-log")"
 fi
 
 # Ghostty is restored to 10pt without running the text-size command, which
@@ -247,5 +332,34 @@ grep -q 'hl.env("HYPRCURSOR_SIZE", "20")' "$INPUT" || fail "old hyprcursor size 
 grep -qx -- '-- header stays' "$INPUT" || fail "the header around the cursor block was dropped"
 grep -qx -- '-- trailing stays' "$INPUT" || fail "the trailer around the cursor block was dropped"
 grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the cursor size did not reload Hyprland"
+
+# An older touchpad block gains tap_and_drag = false and keeps the lines around it.
+cat >"$INPUT" <<'EOF'
+-- header stays
+-- Left-click-and-drag with three fingers on the trackpad.
+hl.config({
+  input = {
+    touchpad = {
+      drag_3fg = 1,
+      scroll_factor = 0.3,
+      natural_scroll = true,
+      disable_while_typing = false,
+    },
+  },
+})
+
+hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })
+
+-- omarchy-dtp-config: cursor size. Omarchy's default is 24.
+hl.env("XCURSOR_SIZE", "20")
+hl.env("HYPRCURSOR_SIZE", "20")
+-- trailing stays
+EOF
+reset_logs
+"$ROOT/install.sh" >/dev/null
+grep -q 'tap_and_drag = false' "$INPUT" || fail "an older touchpad block did not turn off double-tap-to-drag"
+grep -qx -- '-- header stays' "$INPUT" || fail "the header around the touchpad block was dropped"
+grep -qx -- '-- trailing stays' "$INPUT" || fail "the trailer around the touchpad block was dropped"
+grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the touchpad block did not reload Hyprland"
 
 echo "ok"

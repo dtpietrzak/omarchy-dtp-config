@@ -216,6 +216,122 @@ else
   omarchy bar set omarchy.clock format "$CLOCK_FORMAT"
 fi
 
+# 12px is the spacer's own default, and the gap Omarchy's bar docs put
+# between the menu button and the workspace widget.
+SPACER_SIZE=12
+SHELL_JSON="$HOME/.config/omarchy/shell.json"
+
+spacer_plan() {
+  python3 - "$SHELL_JSON" "$SPACER_SIZE" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path, size_text = sys.argv[1:]
+size = int(size_text)
+file = Path(path)
+if not file.is_file() or file.stat().st_size == 0:
+    print("skip missing")
+    raise SystemExit
+
+def widget_id(entry):
+    if isinstance(entry, dict):
+        return entry.get("id")
+    return None
+
+def is_workspace(widget):
+    return widget in {"omarchy.workspaces", "io.github.sanchokusika.workspace-styler"} or (
+        isinstance(widget, str) and widget.endswith(".workspaces")
+    )
+
+data = json.loads(file.read_text())
+layout = data.get("bar", {}).get("layout", {})
+left = layout.get("left") if isinstance(layout, dict) else None
+if not isinstance(left, list):
+    print("skip no-left")
+    raise SystemExit
+
+ids = [widget_id(entry) for entry in left]
+if "dtpietrzak.menu" in ids:
+    menu_id = "dtpietrzak.menu"
+elif "omarchy.menu" in ids:
+    menu_id = "omarchy.menu"
+else:
+    print("skip no-menu")
+    raise SystemExit
+menu = ids.index(menu_id)
+workspace = next((index for index in range(menu + 1, len(left)) if is_workspace(ids[index])), None)
+if workspace is None:
+    print("skip no-workspace")
+    raise SystemExit
+
+between = left[menu + 1:workspace]
+if len(between) == 1 and widget_id(between[0]) == "omarchy.spacer":
+    if between[0].get("size") == size:
+        print("ok")
+    else:
+        print(f"resize {menu + 1}")
+elif between:
+    print("skip occupied")
+elif any(
+    widget_id(entry) == "omarchy.spacer"
+    for widgets in layout.values()
+    if isinstance(widgets, list)
+    for entry in widgets
+):
+    print(f"move {menu_id}")
+else:
+    print(f"put {menu_id}")
+PY
+}
+
+echo "==> workspace gap"
+plan="$(spacer_plan)"
+case "$plan" in
+  ok)
+    echo "Workspace gap is already ${SPACER_SIZE}px"
+    ;;
+  "put "*)
+    omarchy bar put omarchy.spacer --section left --after "${plan#put }"
+    plan="$(spacer_plan)"
+    [[ $plan == resize\ * ]] || fail "the workspace gap was not added"
+    omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
+    echo "Added a ${SPACER_SIZE}px gap between the menu button and the workspace widget"
+    ;;
+  "move "*)
+    omarchy bar move omarchy.spacer --section left --after "${plan#move }"
+    plan="$(spacer_plan)"
+    if [[ $plan == resize\ * ]]; then
+      omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
+    elif [[ $plan != ok ]]; then
+      fail "the workspace gap was not moved into place"
+    fi
+    echo "Moved the gap between the menu button and the workspace widget"
+    ;;
+  "resize "*)
+    omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
+    echo "Workspace gap set to ${SPACER_SIZE}px"
+    ;;
+  "skip missing")
+    echo "shell.json is missing; workspace gap was left alone"
+    ;;
+  "skip no-left")
+    echo "The bar has no left section; workspace gap was left alone"
+    ;;
+  "skip no-menu")
+    echo "No menu button on the left; workspace gap was left alone"
+    ;;
+  "skip no-workspace")
+    echo "No workspace widget after the menu button; workspace gap was left alone"
+    ;;
+  "skip occupied")
+    echo "Something else sits between the menu button and the workspace widget; workspace gap was left alone"
+    ;;
+  *)
+    fail "could not plan the workspace gap: $plan"
+    ;;
+esac
+
 echo "==> bar widgets"
 disable_plugin omarchy.indicators
 disable_plugin omarchy.elsewhen
