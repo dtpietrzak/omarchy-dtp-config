@@ -9,7 +9,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 TOUCHPAD="$ROOT/hypr/touchpad.lua"
 CURSOR="$ROOT/hypr/cursor.lua"
+FLOATING="$ROOT/hypr/floating-size.lua"
 INPUT="$HOME/.config/hypr/input.lua"
+HYPRLAND="$HOME/.config/hypr/hyprland.lua"
+FLOATING_CONFIG="$HOME/.config/hypr/floating-size.lua"
 FLAGS="$HOME/.config/chromium-flags.conf"
 CHROMIUM_FLAG="--disable-features=AcceleratedVideoDecoder"
 CLOCK_FORMAT="ddd d MMM h:mm AP"
@@ -30,8 +33,9 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 [[ $# -eq 0 ]] || fail "unknown argument: $1"
-[[ -f $TOUCHPAD && -f $CURSOR ]] || fail "missing hypr snippets"
+[[ -f $TOUCHPAD && -f $CURSOR && -f $FLOATING ]] || fail "missing hypr snippets"
 [[ -f $INPUT ]] || fail "$INPUT must already exist"
+[[ -f $HYPRLAND ]] || fail "$HYPRLAND must already exist"
 [[ -f $FLAGS ]] || fail "$FLAGS must already exist"
 
 CURSOR_SIZE="$(sed -n 's/.*hl\.env("XCURSOR_SIZE", "\([0-9][0-9]*\)").*/\1/p' "$CURSOR")"
@@ -240,7 +244,7 @@ def widget_id(entry):
     return None
 
 def is_workspace(widget):
-    return widget in {"omarchy.workspaces", "io.github.sanchokusika.workspace-styler"} or (
+    return widget in {"omarchy.workspaces", "dtpietrzak.workspacecontrol"} or (
         isinstance(widget, str) and widget.endswith(".workspaces")
     )
 
@@ -421,8 +425,65 @@ else
   gsettings_changed=1
 fi
 
-if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 ]]; then
-  if [[ $input_changed -eq 1 ]]; then
+floating_changed=0
+if cmp -s "$FLOATING" "$FLOATING_CONFIG"; then
+  echo "Floating window sizes already match"
+else
+  cp "$FLOATING" "$FLOATING_CONFIG"
+  echo "Updated floating-size.lua"
+  floating_changed=1
+fi
+
+floating_status="$(python3 - "$HYPRLAND" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+marker = "-- omarchy-dtp-config: floating windows reopen at the size the app last had."
+require = 'require("hypr.floating-size")'
+block = marker + "\n" + require + "\n"
+text = path.read_text()
+if not text.endswith("\n"):
+    text += "\n"
+
+if text.count(marker) > 1:
+    raise SystemExit("install: hyprland.lua contains the floating size block more than once")
+
+if marker in text:
+    lines = text.splitlines(keepends=True)
+    start = next(i for i, line in enumerate(lines) if line.startswith(marker))
+    end = start + 1
+    if end >= len(lines) or not lines[end].startswith("require("):
+        raise SystemExit("install: floating size block does not require a module")
+    updated = "".join(lines[:start]) + block + "".join(lines[end + 1 :])
+else:
+    updated = text
+    if not updated.endswith("\n\n"):
+        updated += "\n"
+    updated += block
+
+if updated == path.read_text():
+    print("match")
+else:
+    path.write_text(updated)
+    print("updated")
+PY
+)"
+case "$floating_status" in
+  match)
+    echo "Floating size rule already matches"
+    ;;
+  updated)
+    echo "Floating windows will reopen at the size the app last had"
+    floating_changed=1
+    ;;
+  *)
+    fail "could not install the floating size rule"
+    ;;
+esac
+
+if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 1 ]]; then
+  if [[ $input_changed -eq 1 || $floating_changed -eq 1 ]]; then
     hyprctl reload >/dev/null
     errors="$(hyprctl configerrors 2>&1 || true)"
     if [[ -n ${errors//[[:space:]]/} ]]; then
@@ -431,9 +492,11 @@ if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 ]]; then
     fi
     echo "Hyprland config reloaded with no errors"
   fi
-  theme="${XCURSOR_THEME:-default}"
-  hyprctl setcursor "$theme" "$CURSOR_SIZE" >/dev/null
-  echo "Cursor size set to $CURSOR_SIZE"
+  if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 ]]; then
+    theme="${XCURSOR_THEME:-default}"
+    hyprctl setcursor "$theme" "$CURSOR_SIZE" >/dev/null
+    echo "Cursor size set to $CURSOR_SIZE"
+  fi
 elif [[ $chromium_changed -eq 0 ]]; then
   echo "Hyprland config already matches"
 fi

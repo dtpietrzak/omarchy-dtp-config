@@ -6,6 +6,8 @@ hl.config({
       scroll_factor = 0.3,
       natural_scroll = true,
       disable_while_typing = false,
+      -- A drag starts from a press and hold.
+      tap_and_drag = false,
     },
   },
 })

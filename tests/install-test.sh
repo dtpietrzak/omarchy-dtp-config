@@ -10,8 +10,10 @@ fail() {
 
 [[ -f $ROOT/hypr/touchpad.lua ]] || fail "missing touchpad snippet"
 [[ -f $ROOT/hypr/cursor.lua ]] || fail "missing cursor snippet"
+[[ -f $ROOT/hypr/floating-size.lua ]] || fail "missing floating size snippet"
 luac -p "$ROOT/hypr/touchpad.lua"
 luac -p "$ROOT/hypr/cursor.lua"
+luac -p "$ROOT/hypr/floating-size.lua"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -208,6 +210,8 @@ chmod +x "$tmpdir/bin/hyprctl" "$tmpdir/bin/gsettings" "$tmpdir/bin/omarchy" "$t
 export PATH="$tmpdir/bin:$PATH"
 
 INPUT="$HOME/.config/hypr/input.lua"
+HYPRLAND="$HOME/.config/hypr/hyprland.lua"
+FLOATING="$HOME/.config/hypr/floating-size.lua"
 FLAGS="$HOME/.config/chromium-flags.conf"
 
 reset_logs() {
@@ -219,6 +223,10 @@ assert_quiet_hypr() {
 }
 
 # A stock input file gains the touchpad block, the gesture, and the cursor.
+cat >"$HYPRLAND" <<'EOF'
+-- personal config stays
+-- end stays
+EOF
 cat >"$INPUT" <<'EOF'
 -- Keep only your personal input overrides here. Uncommented settings below
 -- replace Omarchy's defaults.
@@ -243,7 +251,7 @@ cat >"$HOME/.config/omarchy/shell.json" <<'EOF'
     "layout": {
       "left": [
         {"id": "dtpietrzak.menu"},
-        {"id": "io.github.sanchokusika.workspace-styler"}
+        {"id": "dtpietrzak.workspacecontrol"}
       ]
     }
   }
@@ -258,10 +266,17 @@ grep -q 'tap_and_drag = false' "$INPUT" || fail "double-tap-to-drag was not turn
 grep -qx 'hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })' "$INPUT" || fail "4-finger gesture was not written"
 grep -q 'hl.env("XCURSOR_SIZE", "20")' "$INPUT" || fail "cursor size was not written"
 grep -c -F 'hl.env("XCURSOR_SIZE"' "$INPUT" | grep -qx 1 || fail "cursor size was written more than once"
+grep -q 'warp_on_change_workspace = 0' "$INPUT" || fail "mouse setting was not written"
+grep -c -F 'warp_on_change_workspace' "$INPUT" | grep -qx 1 || fail "mouse setting was written more than once"
 grep -qx -- '--disable-features=AcceleratedVideoDecoder' "$FLAGS" || fail "chromium flag was not written"
 grep -qx 'reload' "$HOME/.hyprctl-log" || fail "hyprctl reload was not run"
 grep -qx 'configerrors' "$HOME/.hyprctl-log" || fail "hyprctl configerrors was not run"
 grep -qx 'setcursor default 20' "$HOME/.hyprctl-log" || fail "cursor was not applied: $(cat "$HOME/.hyprctl-log")"
+grep -qx -- '-- personal config stays' "$HYPRLAND" || fail "the hyprland.lua header was dropped"
+grep -qx -- '-- end stays' "$HYPRLAND" || fail "the hyprland.lua trailer was dropped"
+grep -q 'require("hypr.floating-size")' "$HYPRLAND" || fail "floating size was not required"
+grep -c -F 'require("hypr.floating-size")' "$HYPRLAND" | grep -qx 1 || fail "floating size was required more than once"
+cmp -s "$ROOT/hypr/floating-size.lua" "$FLOATING" || fail "floating-size.lua was not installed"
 grep -qx 'set 20' "$HOME/.gsettings-log" || fail "GTK cursor size was not set"
 grep -q 'bar position bottom' "$HOME/.omarchy-log" || fail "bar position was not set"
 grep -q 'display text size 10' "$HOME/.omarchy-log" || fail "text size was not set"
@@ -272,7 +287,7 @@ python3 - "$HOME/.config/omarchy/shell.json" <<'PY' || fail "the workspace gap w
 import json, sys
 left = json.load(open(sys.argv[1]))["bar"]["layout"]["left"]
 ids = [entry["id"] for entry in left]
-assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "io.github.sanchokusika.workspace-styler"], ids
+assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "dtpietrzak.workspacecontrol"], ids
 assert left[1]["size"] == 12
 PY
 if grep -q 'disable omarchy.weather' "$HOME/.plugin-disable-log"; then
@@ -282,6 +297,8 @@ fi
 # The second run leaves matching files alone and does not reload Hyprland.
 before_input="$(cat "$INPUT")"
 before_flags="$(cat "$FLAGS")"
+before_hyprland="$(cat "$HYPRLAND")"
+before_floating="$(cat "$FLOATING")"
 mkdir -p "$HOME/.config/alacritty" "$HOME/.config/foot" "$HOME/.config/kitty" "$HOME/.config/ghostty"
 printf 'size = 8\n' >"$HOME/.config/alacritty/alacritty.toml"
 printf 'font=JetBrainsMono Nerd Font:size=8\n' >"$HOME/.config/foot/foot.ini"
@@ -293,6 +310,8 @@ reset_logs
 "$ROOT/install.sh" >/dev/null
 [[ "$(cat "$INPUT")" == "$before_input" ]] || fail "the second run changed input.lua"
 [[ "$(cat "$FLAGS")" == "$before_flags" ]] || fail "the second run changed chromium flags"
+[[ "$(cat "$HYPRLAND")" == "$before_hyprland" ]] || fail "the second run changed hyprland.lua"
+[[ "$(cat "$FLOATING")" == "$before_floating" ]] || fail "the second run changed floating-size.lua"
 [[ "$(cat "$HOME/.config/ghostty/config")" == "font-size = 10" ]] || fail "the second run changed Ghostty"
 assert_quiet_hypr
 [[ ! -f $HOME/.gsettings-log ]] || fail "gsettings ran when the cursor size already matched"
@@ -361,5 +380,25 @@ grep -q 'tap_and_drag = false' "$INPUT" || fail "an older touchpad block did not
 grep -qx -- '-- header stays' "$INPUT" || fail "the header around the touchpad block was dropped"
 grep -qx -- '-- trailing stays' "$INPUT" || fail "the trailer around the touchpad block was dropped"
 grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the touchpad block did not reload Hyprland"
+
+# An older copy of the floating size script is replaced, and the lines around
+# its require stay.
+printf '%s\n' '-- stale' >"$FLOATING"
+cat >"$HYPRLAND" <<'EOF'
+-- header stays
+-- omarchy-dtp-config: floating windows reopen at the size the app last had.
+require("hypr.old")
+-- trailing stays
+EOF
+reset_logs
+"$ROOT/install.sh" >/dev/null
+cmp -s "$ROOT/hypr/floating-size.lua" "$FLOATING" || fail "the old floating size script was not replaced"
+grep -q 'require("hypr.floating-size")' "$HYPRLAND" || fail "the old floating size require was not replaced"
+grep -qx -- '-- header stays' "$HYPRLAND" || fail "the header around the floating size block was dropped"
+grep -qx -- '-- trailing stays' "$HYPRLAND" || fail "the trailer around the floating size block was dropped"
+grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the floating size script did not reload Hyprland"
+if grep -q 'require("hypr.old")' "$HYPRLAND"; then
+  fail "the old floating size require was left in place"
+fi
 
 echo "ok"
