@@ -18,6 +18,7 @@ The app list, the hidden dock, and the floating title-bar limits stay in their o
 - Dock on the left, auto-hide on, pinned to Chromium, Files, and omawrite. The dock stays off until its own feature turns it back on. The pins are here for that day.
 - Chromium starts with `--disable-features=AcceleratedVideoDecoder`.
 - A floating window opens at the size that app last had. The first one still uses Omarchy's size. A file dialog keeps its own size. The remembered sizes are in `~/.local/state/omarchy-dtp-config/floating-sizes.lua`.
+- Superwhisper is removed, through Omarchy's own remover. That drops the package, the bar panel, and the dictation default, so an update does not install it again. Preferences, history, and models stay.
 
 ## Install
 

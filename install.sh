@@ -556,3 +556,51 @@ if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 
 elif [[ $chromium_changed -eq 0 ]]; then
   echo "Hyprland config already matches"
 fi
+
+echo "==> superwhisper"
+# Omarchy installs Superwhisper again on update while it is the default
+# dictation backend. The stock remover drops the package, the panel, and that
+# default. Preferences, history, and models stay.
+superwhisper_package_link() {
+  [[ -L $1 && $(readlink -- "$1") == "$2" ]]
+}
+
+superwhisper_present() {
+  local config_home data_home dictation link target
+  config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+  dictation="$config_home/omarchy/defaults/dictation"
+
+  if omarchy-pkg-present superwhisper-bin; then
+    return 0
+  fi
+  if [[ -f $dictation && $(<"$dictation") == superwhisper ]]; then
+    return 0
+  fi
+  if systemctl --user is-enabled --quiet superwhisper.service 2>/dev/null \
+    || systemctl --user is-active --quiet superwhisper.service 2>/dev/null; then
+    return 0
+  fi
+
+  while IFS='|' read -r link target; do
+    superwhisper_package_link "$link" "$target" && return 0
+  done <<EOF
+$HOME/.local/bin/superwhisper|/usr/bin/superwhisper
+$data_home/superwhisper/app/current|/opt/superwhisper
+$config_home/omarchy/plugins/superwhisper-panel|/opt/superwhisper/assets/omarchy-plugin/superwhisper-panel
+$HOME/.agents/skills/superwhisper|/opt/superwhisper/assets/agent-skill/superwhisper
+$HOME/.claude/skills/superwhisper|/opt/superwhisper/assets/agent-skill/superwhisper
+$HOME/.codex/skills/superwhisper|/opt/superwhisper/assets/agent-skill/superwhisper
+$HOME/.pi/agent/skills/superwhisper|/opt/superwhisper/assets/agent-skill/superwhisper
+EOF
+  return 1
+}
+
+if superwhisper_present; then
+  command -v omarchy-remove-dictation-superwhisper >/dev/null \
+    || fail "omarchy-remove-dictation-superwhisper is not available"
+  omarchy-remove-dictation-superwhisper
+  echo "Removed Superwhisper"
+else
+  echo "Superwhisper is already removed"
+fi

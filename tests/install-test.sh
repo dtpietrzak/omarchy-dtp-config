@@ -20,6 +20,8 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 export HOME="$tmpdir"
 export XDG_CONFIG_HOME="$tmpdir/.config"
+export XDG_DATA_HOME="$tmpdir/.local/share"
+export XDG_STATE_HOME="$tmpdir/.local/state"
 unset XCURSOR_THEME || true
 mkdir -p "$HOME/.config/hypr" "$HOME/.config/omarchy" "$tmpdir/bin"
 printf '24\n' >"$HOME/.cursor-size"
@@ -206,7 +208,50 @@ cat >"$tmpdir/bin/pkill" <<'EOF'
 printf '%s\n' "$*" >>"$HOME/.pkill-log"
 exit 0
 EOF
-chmod +x "$tmpdir/bin/hyprctl" "$tmpdir/bin/gsettings" "$tmpdir/bin/omarchy" "$tmpdir/bin/jq" "$tmpdir/bin/pkill"
+# Superwhisper checks must not see the real package or the real user service.
+cat >"$tmpdir/bin/omarchy-pkg-present" <<'EOF'
+#!/bin/bash
+[[ $1 == superwhisper-bin && -f $HOME/.superwhisper-pkg ]]
+EOF
+
+cat >"$tmpdir/bin/systemctl" <<'EOF'
+#!/bin/bash
+if [[ $1 == --user && $3 == --quiet && $4 == superwhisper.service ]]; then
+  case $2 in
+    is-enabled) [[ -f $HOME/.superwhisper-enabled ]]; exit ;;
+    is-active) [[ -f $HOME/.superwhisper-active ]]; exit ;;
+  esac
+fi
+echo "unexpected systemctl: $*" >&2
+exit 1
+EOF
+
+# Stands in for Omarchy's remover: clear the traces the installer looks for.
+cat >"$tmpdir/bin/omarchy-remove-dictation-superwhisper" <<'EOF'
+#!/bin/bash
+printf 'remove\n' >>"$HOME/.superwhisper-log"
+rm -f "$HOME/.superwhisper-pkg" "$HOME/.superwhisper-enabled" "$HOME/.superwhisper-active"
+dictation="$HOME/.config/omarchy/defaults/dictation"
+if [[ -f $dictation && $(<"$dictation") == superwhisper ]]; then
+  rm -f "$dictation"
+fi
+unlink_package_link() {
+  if [[ -L $1 && $(readlink -- "$1") == "$2" ]]; then
+    rm "$1"
+  fi
+}
+config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+unlink_package_link "$HOME/.local/bin/superwhisper" /usr/bin/superwhisper
+unlink_package_link "$data_home/superwhisper/app/current" /opt/superwhisper
+unlink_package_link "$config_home/omarchy/plugins/superwhisper-panel" /opt/superwhisper/assets/omarchy-plugin/superwhisper-panel
+for agent in .agents .claude .codex .pi/agent; do
+  unlink_package_link "$HOME/$agent/skills/superwhisper" /opt/superwhisper/assets/agent-skill/superwhisper
+done
+EOF
+
+chmod +x "$tmpdir/bin/hyprctl" "$tmpdir/bin/gsettings" "$tmpdir/bin/omarchy" "$tmpdir/bin/jq" "$tmpdir/bin/pkill" \
+  "$tmpdir/bin/omarchy-pkg-present" "$tmpdir/bin/systemctl" "$tmpdir/bin/omarchy-remove-dictation-superwhisper"
 export PATH="$tmpdir/bin:$PATH"
 
 INPUT="$HOME/.config/hypr/input.lua"
@@ -324,6 +369,7 @@ fi
 if grep -E -q 'bar (put|move) omarchy.spacer' "$HOME/.omarchy-log"; then
   fail "the workspace gap was placed again: $(cat "$HOME/.omarchy-log")"
 fi
+[[ ! -f $HOME/.superwhisper-log ]] || fail "Superwhisper was removed when it was already gone"
 
 # Ghostty is restored to 10pt without running the text-size command, which
 # would put it back at 8pt with the other terminals.
@@ -402,5 +448,64 @@ grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the floating size scri
 if grep -q 'require("hypr.old")' "$HYPRLAND"; then
   fail "the old floating size require was left in place"
 fi
+
+# Any leftover Superwhisper trace is removed once. The next run leaves it alone.
+clear_superwhisper() {
+  rm -f "$HOME/.superwhisper-pkg" "$HOME/.superwhisper-enabled" "$HOME/.superwhisper-active" "$HOME/.superwhisper-log"
+  rm -f "$HOME/.config/omarchy/defaults/dictation"
+  rm -f "$HOME/.local/bin/superwhisper" \
+    "$HOME/.local/share/superwhisper/app/current" \
+    "$HOME/.config/omarchy/plugins/superwhisper-panel" \
+    "$HOME/.agents/skills/superwhisper" \
+    "$HOME/.claude/skills/superwhisper" \
+    "$HOME/.codex/skills/superwhisper" \
+    "$HOME/.pi/agent/skills/superwhisper"
+}
+
+assert_removed_once() {
+  local label=$1
+  [[ -f $HOME/.superwhisper-log ]] || fail "$label: Superwhisper was not removed"
+  [[ $(wc -l <"$HOME/.superwhisper-log") -eq 1 ]] || fail "$label: Superwhisper was removed more than once"
+  reset_logs
+  rm -f "$HOME/.superwhisper-log"
+  "$ROOT/install.sh" >/dev/null
+  [[ ! -f $HOME/.superwhisper-log ]] || fail "$label: Superwhisper was removed again"
+}
+
+mkdir -p "$HOME/.config/omarchy/defaults" "$HOME/.local/bin" "$HOME/.local/share/superwhisper/app" \
+  "$HOME/.config/omarchy/plugins" "$HOME/.agents/skills" "$HOME/.claude/skills" \
+  "$HOME/.codex/skills" "$HOME/.pi/agent/skills"
+
+clear_superwhisper
+printf 'installed\n' >"$HOME/.superwhisper-pkg"
+printf 'enabled\n' >"$HOME/.superwhisper-enabled"
+printf 'active\n' >"$HOME/.superwhisper-active"
+printf 'superwhisper\n' >"$HOME/.config/omarchy/defaults/dictation"
+ln -s /usr/bin/superwhisper "$HOME/.local/bin/superwhisper"
+ln -s /opt/superwhisper "$HOME/.local/share/superwhisper/app/current"
+ln -s /opt/superwhisper/assets/omarchy-plugin/superwhisper-panel "$HOME/.config/omarchy/plugins/superwhisper-panel"
+ln -s /opt/superwhisper/assets/agent-skill/superwhisper "$HOME/.agents/skills/superwhisper"
+reset_logs
+"$ROOT/install.sh" >/dev/null
+[[ ! -f $HOME/.superwhisper-pkg ]] || fail "the Superwhisper package was still present"
+[[ ! -f $HOME/.config/omarchy/defaults/dictation ]] || fail "the dictation default was not cleared"
+[[ ! -L $HOME/.local/bin/superwhisper ]] || fail "the Superwhisper command link was left in place"
+[[ ! -L $HOME/.config/omarchy/plugins/superwhisper-panel ]] || fail "the Superwhisper panel link was left in place"
+[[ ! -L $HOME/.agents/skills/superwhisper ]] || fail "the Superwhisper skill link was left in place"
+assert_removed_once "a full Superwhisper install"
+
+clear_superwhisper
+printf 'superwhisper\n' >"$HOME/.config/omarchy/defaults/dictation"
+reset_logs
+"$ROOT/install.sh" >/dev/null
+[[ ! -f $HOME/.config/omarchy/defaults/dictation ]] || fail "a leftover dictation default was not cleared"
+assert_removed_once "a leftover dictation default"
+
+clear_superwhisper
+ln -s /opt/superwhisper/assets/agent-skill/superwhisper "$HOME/.claude/skills/superwhisper"
+reset_logs
+"$ROOT/install.sh" >/dev/null
+[[ ! -L $HOME/.claude/skills/superwhisper ]] || fail "a leftover skill link was left in place"
+assert_removed_once "a leftover skill link"
 
 echo "ok"
