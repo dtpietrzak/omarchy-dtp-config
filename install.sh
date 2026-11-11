@@ -10,9 +10,11 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 TOUCHPAD="$ROOT/hypr/touchpad.lua"
 CURSOR="$ROOT/hypr/cursor.lua"
 FLOATING="$ROOT/hypr/floating-size.lua"
+ROUNDING="$ROOT/hypr/rounding.lua"
 INPUT="$HOME/.config/hypr/input.lua"
 HYPRLAND="$HOME/.config/hypr/hyprland.lua"
 FLOATING_CONFIG="$HOME/.config/hypr/floating-size.lua"
+ROUNDING_CONFIG="$HOME/.config/hypr/rounding.lua"
 FLAGS="$HOME/.config/chromium-flags.conf"
 CHROMIUM_FLAG="--disable-features=AcceleratedVideoDecoder"
 CLOCK_FORMAT="ddd d MMM h:mm AP"
@@ -33,7 +35,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 [[ $# -eq 0 ]] || fail "unknown argument: $1"
-[[ -f $TOUCHPAD && -f $CURSOR && -f $FLOATING ]] || fail "missing hypr snippets"
+[[ -f $TOUCHPAD && -f $CURSOR && -f $FLOATING && -f $ROUNDING ]] || fail "missing hypr snippets"
 [[ -f $INPUT ]] || fail "$INPUT must already exist"
 [[ -f $HYPRLAND ]] || fail "$HYPRLAND must already exist"
 [[ -f $FLAGS ]] || fail "$FLAGS must already exist"
@@ -220,121 +222,7 @@ else
   omarchy bar set omarchy.clock format "$CLOCK_FORMAT"
 fi
 
-# 12px is the spacer's own default, and the gap Omarchy's bar docs put
-# between the menu button and the workspace widget.
-SPACER_SIZE=12
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
-
-spacer_plan() {
-  python3 - "$SHELL_JSON" "$SPACER_SIZE" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-path, size_text = sys.argv[1:]
-size = int(size_text)
-file = Path(path)
-if not file.is_file() or file.stat().st_size == 0:
-    print("skip missing")
-    raise SystemExit
-
-def widget_id(entry):
-    if isinstance(entry, dict):
-        return entry.get("id")
-    return None
-
-def is_workspace(widget):
-    return widget in {"omarchy.workspaces", "io.github.dtpietrzak.workspace-control"} or (
-        isinstance(widget, str) and widget.endswith(".workspaces")
-    )
-
-data = json.loads(file.read_text())
-layout = data.get("bar", {}).get("layout", {})
-left = layout.get("left") if isinstance(layout, dict) else None
-if not isinstance(left, list):
-    print("skip no-left")
-    raise SystemExit
-
-ids = [widget_id(entry) for entry in left]
-if "dtpietrzak.menu" in ids:
-    menu_id = "dtpietrzak.menu"
-elif "omarchy.menu" in ids:
-    menu_id = "omarchy.menu"
-else:
-    print("skip no-menu")
-    raise SystemExit
-menu = ids.index(menu_id)
-workspace = next((index for index in range(menu + 1, len(left)) if is_workspace(ids[index])), None)
-if workspace is None:
-    print("skip no-workspace")
-    raise SystemExit
-
-between = left[menu + 1:workspace]
-if len(between) == 1 and widget_id(between[0]) == "omarchy.spacer":
-    if between[0].get("size") == size:
-        print("ok")
-    else:
-        print(f"resize {menu + 1}")
-elif between:
-    print("skip occupied")
-elif any(
-    widget_id(entry) == "omarchy.spacer"
-    for widgets in layout.values()
-    if isinstance(widgets, list)
-    for entry in widgets
-):
-    print(f"move {menu_id}")
-else:
-    print(f"put {menu_id}")
-PY
-}
-
-echo "==> workspace gap"
-plan="$(spacer_plan)"
-case "$plan" in
-  ok)
-    echo "Workspace gap is already ${SPACER_SIZE}px"
-    ;;
-  "put "*)
-    omarchy bar put omarchy.spacer --section left --after "${plan#put }"
-    plan="$(spacer_plan)"
-    [[ $plan == resize\ * ]] || fail "the workspace gap was not added"
-    omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
-    echo "Added a ${SPACER_SIZE}px gap between the menu button and the workspace widget"
-    ;;
-  "move "*)
-    omarchy bar move omarchy.spacer --section left --after "${plan#move }"
-    plan="$(spacer_plan)"
-    if [[ $plan == resize\ * ]]; then
-      omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
-    elif [[ $plan != ok ]]; then
-      fail "the workspace gap was not moved into place"
-    fi
-    echo "Moved the gap between the menu button and the workspace widget"
-    ;;
-  "resize "*)
-    omarchy bar set omarchy.spacer size "$SPACER_SIZE" --json --section left --index "${plan#resize }"
-    echo "Workspace gap set to ${SPACER_SIZE}px"
-    ;;
-  "skip missing")
-    echo "shell.json is missing; workspace gap was left alone"
-    ;;
-  "skip no-left")
-    echo "The bar has no left section; workspace gap was left alone"
-    ;;
-  "skip no-menu")
-    echo "No menu button on the left; workspace gap was left alone"
-    ;;
-  "skip no-workspace")
-    echo "No workspace widget after the menu button; workspace gap was left alone"
-    ;;
-  "skip occupied")
-    echo "Something else sits between the menu button and the workspace widget; workspace gap was left alone"
-    ;;
-  *)
-    fail "could not plan the workspace gap: $plan"
-    ;;
-esac
 
 echo "==> bar widgets"
 disable_plugin omarchy.indicators
@@ -425,36 +313,30 @@ else
   gsettings_changed=1
 fi
 
-floating_changed=0
-if cmp -s "$FLOATING" "$FLOATING_CONFIG"; then
-  echo "Floating window sizes already match"
-else
-  cp "$FLOATING" "$FLOATING_CONFIG"
-  echo "Updated floating-size.lua"
-  floating_changed=1
-fi
-
-floating_status="$(python3 - "$HYPRLAND" <<'PY'
+# Copy a hypr module into place and keep one marked require for it at the end
+# of hyprland.lua. Prints "match" or "updated".
+require_module() {
+  python3 - "$HYPRLAND" "$1" "$2" <<'PY'
 import sys
 from pathlib import Path
 
-path = Path(sys.argv[1])
-marker = "-- omarchy-dtp-config: floating windows reopen at the size the app last had."
-require = 'require("hypr.floating-size")'
+path, marker, module = sys.argv[1:]
+path = Path(path)
+require = f'require("hypr.{module}")'
 block = marker + "\n" + require + "\n"
 text = path.read_text()
 if not text.endswith("\n"):
     text += "\n"
 
 if text.count(marker) > 1:
-    raise SystemExit("install: hyprland.lua contains the floating size block more than once")
+    raise SystemExit(f"install: hyprland.lua contains the {module} block more than once")
 
 if marker in text:
     lines = text.splitlines(keepends=True)
     start = next(i for i, line in enumerate(lines) if line.startswith(marker))
     end = start + 1
     if end >= len(lines) or not lines[end].startswith("require("):
-        raise SystemExit("install: floating size block does not require a module")
+        raise SystemExit(f"install: {module} block does not require a module")
     updated = "".join(lines[:start]) + block + "".join(lines[end + 1 :])
 else:
     updated = text
@@ -468,7 +350,18 @@ else:
     path.write_text(updated)
     print("updated")
 PY
-)"
+}
+
+floating_changed=0
+if cmp -s "$FLOATING" "$FLOATING_CONFIG"; then
+  echo "Floating window sizes already match"
+else
+  cp "$FLOATING" "$FLOATING_CONFIG"
+  echo "Updated floating-size.lua"
+  floating_changed=1
+fi
+
+floating_status="$(require_module "-- omarchy-dtp-config: floating windows reopen at the size the app last had." floating-size)"
 case "$floating_status" in
   match)
     echo "Floating size rule already matches"
@@ -479,6 +372,29 @@ case "$floating_status" in
     ;;
   *)
     fail "could not install the floating size rule"
+    ;;
+esac
+
+rounding_changed=0
+if cmp -s "$ROUNDING" "$ROUNDING_CONFIG"; then
+  echo "Window rounding already matches"
+else
+  cp "$ROUNDING" "$ROUNDING_CONFIG"
+  echo "Updated rounding.lua"
+  rounding_changed=1
+fi
+
+rounding_status="$(require_module "-- omarchy-dtp-config: round window corners." rounding)"
+case "$rounding_status" in
+  match)
+    echo "Window rounding rule already matches"
+    ;;
+  updated)
+    echo "Window corners will be rounded"
+    rounding_changed=1
+    ;;
+  *)
+    fail "could not install the window rounding rule"
     ;;
 esac
 
@@ -538,8 +454,8 @@ PY
   fi
 fi
 
-if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 1 || $workspace_changed -eq 1 ]]; then
-  if [[ $input_changed -eq 1 || $floating_changed -eq 1 || $workspace_changed -eq 1 ]]; then
+if [[ $input_changed -eq 1 || $gsettings_changed -eq 1 || $floating_changed -eq 1 || $rounding_changed -eq 1 || $workspace_changed -eq 1 ]]; then
+  if [[ $input_changed -eq 1 || $floating_changed -eq 1 || $rounding_changed -eq 1 || $workspace_changed -eq 1 ]]; then
     hyprctl reload >/dev/null
     errors="$(hyprctl configerrors 2>&1 || true)"
     if [[ -n ${errors//[[:space:]]/} ]]; then

@@ -11,9 +11,11 @@ fail() {
 [[ -f $ROOT/hypr/touchpad.lua ]] || fail "missing touchpad snippet"
 [[ -f $ROOT/hypr/cursor.lua ]] || fail "missing cursor snippet"
 [[ -f $ROOT/hypr/floating-size.lua ]] || fail "missing floating size snippet"
+[[ -f $ROOT/hypr/rounding.lua ]] || fail "missing rounding snippet"
 luac -p "$ROOT/hypr/touchpad.lua"
 luac -p "$ROOT/hypr/cursor.lua"
 luac -p "$ROOT/hypr/floating-size.lua"
+luac -p "$ROOT/hypr/rounding.lua"
 
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
@@ -113,70 +115,9 @@ if [[ $1 == display && $2 == text && $3 == size ]]; then
   printf '%s\n' "$4" >"$HOME/.text-px"
   exit 0
 fi
-if [[ $1 == bar && ( $2 == put || $2 == move || $2 == set ) && $3 == omarchy.spacer ]]; then
-  spacer-state "$HOME/.config/omarchy/shell.json" "$@"
-  exit 0
-fi
 echo "unexpected omarchy: $*" >&2
 exit 1
 EOF
-
-# The stub's $HOME is the temp root, so the helper lives beside the other fakes.
-cat >"$tmpdir/bin/spacer-state" <<'PY'
-#!/usr/bin/env python3
-import json
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-args = sys.argv[2:]
-data = json.loads(path.read_text())
-left = data.setdefault("bar", {}).setdefault("layout", {}).setdefault("left", [])
-
-def widget_id(entry):
-    return entry.get("id") if isinstance(entry, dict) else None
-
-def find_spacer():
-    for section, widgets in data["bar"]["layout"].items():
-        if not isinstance(widgets, list):
-            continue
-        for index, entry in enumerate(widgets):
-            if widget_id(entry) == "omarchy.spacer":
-                return section, index
-    return None
-
-def after_index(anchor):
-    for index, entry in enumerate(left):
-        if widget_id(entry) == anchor:
-            return index + 1
-    raise SystemExit(f"missing anchor {anchor}")
-
-op = args[1]
-if op in {"put", "move"}:
-    anchor = args[args.index("--after") + 1]
-    if op == "put":
-        if find_spacer() is None:
-            left.insert(after_index(anchor), {"id": "omarchy.spacer"})
-    else:
-        found = find_spacer()
-        if found is None:
-            raise SystemExit("cannot move spacer")
-        section, index = found
-        entry = data["bar"]["layout"][section].pop(index)
-        left.insert(after_index(anchor), entry)
-elif op == "set":
-    if "--json" not in args:
-        raise SystemExit("spacer size was not passed as JSON")
-    index = int(args[args.index("--index") + 1])
-    if widget_id(left[index]) != "omarchy.spacer":
-        raise SystemExit(f"index {index} is not the spacer")
-    left[index]["size"] = json.loads(args[4])
-else:
-    raise SystemExit("unhandled spacer command: " + " ".join(args))
-
-path.write_text(json.dumps(data, indent=2) + "\n")
-PY
-chmod +x "$tmpdir/bin/spacer-state"
 
 cat >"$tmpdir/bin/jq" <<'EOF'
 #!/usr/bin/env bash
@@ -257,6 +198,7 @@ export PATH="$tmpdir/bin:$PATH"
 INPUT="$HOME/.config/hypr/input.lua"
 HYPRLAND="$HOME/.config/hypr/hyprland.lua"
 FLOATING="$HOME/.config/hypr/floating-size.lua"
+ROUNDING="$HOME/.config/hypr/rounding.lua"
 FLAGS="$HOME/.config/chromium-flags.conf"
 
 reset_logs() {
@@ -324,18 +266,18 @@ grep -qx -- '-- end stays' "$HYPRLAND" || fail "the hyprland.lua trailer was dro
 grep -q 'require("hypr.floating-size")' "$HYPRLAND" || fail "floating size was not required"
 grep -c -F 'require("hypr.floating-size")' "$HYPRLAND" | grep -qx 1 || fail "floating size was required more than once"
 cmp -s "$ROOT/hypr/floating-size.lua" "$FLOATING" || fail "floating-size.lua was not installed"
+grep -c -F 'require("hypr.rounding")' "$HYPRLAND" | grep -qx 1 || fail "rounding was not required exactly once"
+cmp -s "$ROOT/hypr/rounding.lua" "$ROUNDING" || fail "rounding.lua was not installed"
 grep -qx 'set 20' "$HOME/.gsettings-log" || fail "GTK cursor size was not set"
 grep -q 'bar position bottom' "$HOME/.omarchy-log" || fail "bar position was not set"
 grep -q 'display text size 10' "$HOME/.omarchy-log" || fail "text size was not set"
 grep -q 'disable omarchy.indicators' "$HOME/.plugin-disable-log" || fail "indicators were not disabled"
 grep -q 'dock position left' "$HOME/.omarchy-log" || fail "dock position was not set"
 grep -q 'dock autohide on' "$HOME/.omarchy-log" || fail "dock autohide was not set"
-python3 - "$HOME/.config/omarchy/shell.json" <<'PY' || fail "the workspace gap was not added"
+python3 - "$HOME/.config/omarchy/shell.json" <<'PY' || fail "a gap was put between the menu button and the workspace widget"
 import json, sys
-left = json.load(open(sys.argv[1]))["bar"]["layout"]["left"]
-ids = [entry["id"] for entry in left]
-assert ids[:3] == ["dtpietrzak.menu", "omarchy.spacer", "io.github.dtpietrzak.workspace-control"], ids
-assert left[1]["size"] == 12
+ids = [entry["id"] for entry in json.load(open(sys.argv[1]))["bar"]["layout"]["left"]]
+assert ids == ["dtpietrzak.menu", "io.github.dtpietrzak.workspace-control"], ids
 PY
 if grep -q 'disable omarchy.weather' "$HOME/.plugin-disable-log"; then
   fail "a widget that was already off was disabled again"
@@ -346,6 +288,7 @@ before_input="$(cat "$INPUT")"
 before_flags="$(cat "$FLAGS")"
 before_hyprland="$(cat "$HYPRLAND")"
 before_floating="$(cat "$FLOATING")"
+before_rounding="$(cat "$ROUNDING")"
 mkdir -p "$HOME/.config/alacritty" "$HOME/.config/foot" "$HOME/.config/kitty" "$HOME/.config/ghostty"
 printf 'size = 8\n' >"$HOME/.config/alacritty/alacritty.toml"
 printf 'font=JetBrainsMono Nerd Font:size=8\n' >"$HOME/.config/foot/foot.ini"
@@ -359,15 +302,13 @@ reset_logs
 [[ "$(cat "$FLAGS")" == "$before_flags" ]] || fail "the second run changed chromium flags"
 [[ "$(cat "$HYPRLAND")" == "$before_hyprland" ]] || fail "the second run changed hyprland.lua"
 [[ "$(cat "$FLOATING")" == "$before_floating" ]] || fail "the second run changed floating-size.lua"
+[[ "$(cat "$ROUNDING")" == "$before_rounding" ]] || fail "the second run changed rounding.lua"
 [[ "$(cat "$HOME/.config/ghostty/config")" == "font-size = 10" ]] || fail "the second run changed Ghostty"
 assert_quiet_hypr
 [[ ! -f $HOME/.gsettings-log ]] || fail "gsettings ran when the cursor size already matched"
 [[ ! -f $HOME/.pkill-log ]] || fail "Ghostty was signaled when its font size already matched"
 if grep -E -q 'position bottom|position left|autohide on|text size 10|bar set ' "$HOME/.omarchy-log"; then
   fail "a setting that already matched was written again: $(cat "$HOME/.omarchy-log")"
-fi
-if grep -E -q 'bar (put|move) omarchy.spacer' "$HOME/.omarchy-log"; then
-  fail "the workspace gap was placed again: $(cat "$HOME/.omarchy-log")"
 fi
 [[ ! -f $HOME/.superwhisper-log ]] || fail "Superwhisper was removed when it was already gone"
 
@@ -448,6 +389,13 @@ grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the floating size scri
 if grep -q 'require("hypr.old")' "$HYPRLAND"; then
   fail "the old floating size require was left in place"
 fi
+
+# An older copy of the rounding snippet is replaced and Hyprland reloads.
+printf '%s\n' '-- stale' >"$ROUNDING"
+reset_logs
+"$ROOT/install.sh" >/dev/null
+cmp -s "$ROOT/hypr/rounding.lua" "$ROUNDING" || fail "the old rounding snippet was not replaced"
+grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the rounding snippet did not reload Hyprland"
 
 # Any leftover Superwhisper trace is removed once. The next run leaves it alone.
 clear_superwhisper() {
