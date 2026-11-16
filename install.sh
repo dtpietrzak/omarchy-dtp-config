@@ -8,6 +8,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 TOUCHPAD="$ROOT/hypr/touchpad.lua"
+ACCEL="$ROOT/hypr/trackpad-accel.lua"
 CURSOR="$ROOT/hypr/cursor.lua"
 FLOATING="$ROOT/hypr/floating-size.lua"
 ROUNDING="$ROOT/hypr/rounding.lua"
@@ -35,7 +36,7 @@ if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
   exit 0
 fi
 [[ $# -eq 0 ]] || fail "unknown argument: $1"
-[[ -f $TOUCHPAD && -f $CURSOR && -f $FLOATING && -f $ROUNDING ]] || fail "missing hypr snippets"
+[[ -f $TOUCHPAD && -f $ACCEL && -f $CURSOR && -f $FLOATING && -f $ROUNDING ]] || fail "missing hypr snippets"
 [[ -f $INPUT ]] || fail "$INPUT must already exist"
 [[ -f $HYPRLAND ]] || fail "$HYPRLAND must already exist"
 [[ -f $FLAGS ]] || fail "$FLAGS must already exist"
@@ -43,22 +44,29 @@ fi
 CURSOR_SIZE="$(sed -n 's/.*hl\.env("XCURSOR_SIZE", "\([0-9][0-9]*\)").*/\1/p' "$CURSOR")"
 [[ $CURSOR_SIZE =~ ^[0-9]+$ ]] || fail "cursor snippet has no XCURSOR_SIZE"
 
-status="$(python3 - "$TOUCHPAD" "$CURSOR" "$INPUT" "$FLAGS" "$CHROMIUM_FLAG" <<'PY'
+status="$(python3 - "$TOUCHPAD" "$ACCEL" "$CURSOR" "$INPUT" "$FLAGS" "$CHROMIUM_FLAG" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-touchpad_path, cursor_path, input_path, flags_path, chromium_flag = sys.argv[1:]
+touchpad_path, accel_path, cursor_path, input_path, flags_path, chromium_flag = sys.argv[1:]
 touchpad = Path(touchpad_path).read_text()
+accel = Path(accel_path).read_text()
 cursor = Path(cursor_path).read_text()
 if not touchpad.endswith("\n"):
     touchpad += "\n"
+if not accel.endswith("\n"):
+    accel += "\n"
 if not cursor.endswith("\n"):
     cursor += "\n"
 
 start = "-- Left-click-and-drag with three fingers on the trackpad."
+accel_start = "-- Apple's trackpad curve"
+palm_device = 'apple-mtp-multi-touch-(palm-rejection)'
 if touchpad.count(start) != 1 or not touchpad.rstrip().endswith("})"):
     raise SystemExit("install: touchpad snippet must be the three-finger block")
+if accel.count(accel_start) != 1 or accel.count("hl.device(") != 2 or palm_device not in accel:
+    raise SystemExit("install: trackpad accel snippet must set both devices")
 if 'hl.env("XCURSOR_SIZE"' not in cursor or 'hl.env("HYPRCURSOR_SIZE"' not in cursor:
     raise SystemExit("install: cursor snippet must set both cursor size variables")
 
@@ -102,6 +110,44 @@ def replace_touchpad(text):
             break
     new = "".join(lines[:insert_at]) + touchpad + "\n" + "".join(lines[insert_at:])
     return new, True
+
+def replace_accel(text):
+    if accel in text:
+        return text, False
+    lines = text.splitlines(keepends=True)
+    idxs = [i for i, line in enumerate(lines) if line.startswith(accel_start)]
+    if len(idxs) > 1:
+        raise SystemExit("install: input.lua contains the trackpad accel block more than once")
+    if len(idxs) == 1:
+        end = None
+        for j in range(idxs[0] + 1, len(lines)):
+            if palm_device in lines[j]:
+                end = j
+                break
+        if end is None:
+            raise SystemExit("install: trackpad accel block does not set the palm-rejection device")
+        new = "".join(lines[: idxs[0]]) + accel + "".join(lines[end + 1 :])
+        return new, True
+    # The curve follows the touchpad block. Scroll stays on scroll_factor.
+    touch_idxs = [i for i, line in enumerate(lines) if line.startswith(start)]
+    if len(touch_idxs) == 1:
+        end = None
+        for j in range(touch_idxs[0] + 1, len(lines)):
+            if lines[j].rstrip("\r\n") == "})":
+                end = j
+                break
+        if end is None:
+            raise SystemExit("install: touchpad block has no closing })")
+        prefix = "".join(lines[: end + 1])
+        if not prefix.endswith("\n\n"):
+            prefix += "\n"
+        suffix = "".join(lines[end + 1 :])
+        block = accel if suffix.startswith("\n") or suffix == "" else accel + "\n"
+        return prefix + block + suffix, True
+    new = finish(text)
+    if new and not new.endswith("\n\n"):
+        new += "\n"
+    return new + accel, True
 
 def replace_gesture(text):
     lines = text.splitlines(keepends=True)
@@ -159,6 +205,7 @@ def replace_cursor(text):
 path = Path(input_path)
 original = path.read_text()
 updated, touchpad_changed = replace_touchpad(original)
+updated, accel_changed = replace_accel(updated)
 updated, gesture_changed = replace_gesture(updated)
 updated, cursor_changed = replace_cursor(updated)
 input_changed = updated != original
@@ -179,7 +226,7 @@ else:
     print("Updated chromium-flags.conf")
     flag_changed = True
 
-print(f"STATUS input_changed={1 if input_changed or touchpad_changed or gesture_changed or cursor_changed else 0}")
+print(f"STATUS input_changed={1 if input_changed or touchpad_changed or accel_changed or gesture_changed or cursor_changed else 0}")
 print(f"STATUS chromium_changed={1 if flag_changed else 0}")
 PY
 )"

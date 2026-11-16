@@ -9,10 +9,12 @@ fail() {
 }
 
 [[ -f $ROOT/hypr/touchpad.lua ]] || fail "missing touchpad snippet"
+[[ -f $ROOT/hypr/trackpad-accel.lua ]] || fail "missing trackpad accel snippet"
 [[ -f $ROOT/hypr/cursor.lua ]] || fail "missing cursor snippet"
 [[ -f $ROOT/hypr/floating-size.lua ]] || fail "missing floating size snippet"
 [[ -f $ROOT/hypr/rounding.lua ]] || fail "missing rounding snippet"
 luac -p "$ROOT/hypr/touchpad.lua"
+luac -p "$ROOT/hypr/trackpad-accel.lua"
 luac -p "$ROOT/hypr/cursor.lua"
 luac -p "$ROOT/hypr/floating-size.lua"
 luac -p "$ROOT/hypr/rounding.lua"
@@ -248,9 +250,15 @@ EOF
 reset_logs
 
 "$ROOT/install.sh" >/dev/null
-grep -q 'scroll_factor = 0.3' "$INPUT" || fail "touchpad scroll factor was not written"
+grep -q 'scroll_factor = 0.05,' "$INPUT" || fail "touchpad scroll factor was not written"
 grep -q 'natural_scroll = true' "$INPUT" || fail "natural scroll was not written"
 grep -q 'tap_and_drag = false' "$INPUT" || fail "double-tap-to-drag was not turned off"
+grep -q 'custom 0.5124' "$INPUT" || fail "trackpad accel curve was not written"
+grep -c -F 'name = "apple-mtp-multi-touch"' "$INPUT" | grep -qx 1 || fail "trackpad accel was not written once"
+grep -c -F 'apple-mtp-multi-touch-(palm-rejection)' "$INPUT" | grep -qx 1 || fail "palm-rejection accel was not written once"
+if grep -q 'scroll_points' "$INPUT"; then
+  fail "scroll was put on the pointer curve"
+fi
 grep -qx 'hl.gesture({ fingers = 4, direction = "horizontal", action = "workspace" })' "$INPUT" || fail "4-finger gesture was not written"
 grep -q 'hl.env("XCURSOR_SIZE", "20")' "$INPUT" || fail "cursor size was not written"
 grep -c -F 'hl.env("XCURSOR_SIZE"' "$INPUT" | grep -qx 1 || fail "cursor size was written more than once"
@@ -366,9 +374,34 @@ EOF
 reset_logs
 "$ROOT/install.sh" >/dev/null
 grep -q 'tap_and_drag = false' "$INPUT" || fail "an older touchpad block did not turn off double-tap-to-drag"
+grep -q 'scroll_factor = 0.05,' "$INPUT" || fail "an older touchpad block kept the old scroll speed"
+if grep -q 'scroll_factor = 0.3' "$INPUT"; then
+  fail "an older touchpad block kept scroll factor 0.3"
+fi
+grep -c -F 'apple-mtp-multi-touch-(palm-rejection)' "$INPUT" | grep -qx 1 || fail "an older touchpad block did not gain the accel curve"
 grep -qx -- '-- header stays' "$INPUT" || fail "the header around the touchpad block was dropped"
 grep -qx -- '-- trailing stays' "$INPUT" || fail "the trailer around the touchpad block was dropped"
 grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the touchpad block did not reload Hyprland"
+
+# An older copy of the curve is replaced, and the lines around it stay.
+cat >"$INPUT" <<'EOF'
+-- header stays
+-- Apple's trackpad curve (old)
+local macos_trackpad_accel = "custom 1 0 1"
+hl.device({ name = "apple-mtp-multi-touch", accel_profile = macos_trackpad_accel })
+hl.device({ name = "apple-mtp-multi-touch-(palm-rejection)", accel_profile = macos_trackpad_accel })
+-- trailing stays
+EOF
+reset_logs
+"$ROOT/install.sh" >/dev/null
+grep -q 'custom 0.5124' "$INPUT" || fail "an older accel curve was not replaced"
+if grep -q 'custom 1 0 1' "$INPUT"; then
+  fail "the old accel curve was left in place"
+fi
+grep -c -F 'apple-mtp-multi-touch-(palm-rejection)' "$INPUT" | grep -qx 1 || fail "replacing the accel curve duplicated a device"
+grep -qx -- '-- header stays' "$INPUT" || fail "the header around the accel block was dropped"
+grep -qx -- '-- trailing stays' "$INPUT" || fail "the trailer around the accel block was dropped"
+grep -qx 'reload' "$HOME/.hyprctl-log" || fail "replacing the accel curve did not reload Hyprland"
 
 # An older copy of the floating size script is replaced, and the lines around
 # its require stay.
