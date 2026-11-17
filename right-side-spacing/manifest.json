@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.dtpietrzak.right-side-bar-spacing",
+  "name": "Right Side Bar Spacing",
+  "version": "1.0.0",
+  "author": "dtpietrzak",
+  "description": "Even spacing and subtle dividers between right-side bar widgets",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Right Side Bar Spacing",
+    "description": "A subtle divider with even spacing on either side",
+    "category": "Appearance",
+    "allowMultiple": true,
+    "defaultSection": "right"
+  }
+}

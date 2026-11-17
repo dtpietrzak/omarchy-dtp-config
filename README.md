@@ -14,6 +14,7 @@ The app list, the hidden dock, and the floating title-bar limits stay in their o
 - Four-finger horizontal swipe changes workspace.
 - Text size 10px, through `omarchy display text size`. Alacritty, Foot, and Kitty follow at 8pt. Ghostty stays at 10pt.
 - Bar on the bottom. Clock format `ddd d MMM h:mm AP`.
+- Dividers around the battery on the right side of the bar. The gap after the divider before the battery is wider, and the gap after the divider before Quick Options is tighter.
 - Window corners rounded at 6px. Omarchy's are square.
 - Indicators, Elsewhen, and Weather are off.
 - Dock on the left, auto-hide on, pinned to Chromium, Files, and omawrite. The dock stays off until its own feature turns it back on. The pins are here for that day.
@@ -35,7 +36,7 @@ From a local checkout:
 ./install.sh
 ```
 
-Running it again leaves a setting that already matches untouched. A running app keeps its old cursor until it is opened again.
+Running it again leaves a setting that already matches untouched. The right-side divider widget is installed under `~/.config/omarchy/plugins/` and inserted between the widgets in the right bar layout. A running app keeps its old cursor until it is opened again.
 
 ## Left out
 

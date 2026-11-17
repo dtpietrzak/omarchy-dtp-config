@@ -271,6 +271,72 @@ fi
 
 SHELL_JSON="$HOME/.config/omarchy/shell.json"
 
+echo "==> right-side bar spacing"
+RIGHT_SPACING_PLUGIN="io.github.dtpietrzak.right-side-bar-spacing"
+RIGHT_SPACING_SOURCE="$ROOT/right-side-spacing"
+RIGHT_SPACING_DEST="$HOME/.config/omarchy/plugins/$RIGHT_SPACING_PLUGIN"
+[[ -f $RIGHT_SPACING_SOURCE/manifest.json && -f $RIGHT_SPACING_SOURCE/BarWidget.qml ]] \
+  || fail "missing right-side spacing widget files"
+mkdir -p "$RIGHT_SPACING_DEST"
+plugin_files_changed=0
+for file in manifest.json BarWidget.qml; do
+  if ! cmp -s "$RIGHT_SPACING_SOURCE/$file" "$RIGHT_SPACING_DEST/$file" 2>/dev/null; then
+    cp "$RIGHT_SPACING_SOURCE/$file" "$RIGHT_SPACING_DEST/$file"
+    plugin_files_changed=1
+  fi
+done
+
+layout_changed="$(python3 - "$SHELL_JSON" "$RIGHT_SPACING_PLUGIN" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+plugin_id = sys.argv[2]
+if not path.is_file():
+    print(0)
+    raise SystemExit
+
+config = json.loads(path.read_text())
+bar = config.get("bar")
+layout = bar.get("layout") if isinstance(bar, dict) else None
+right = layout.get("right") if isinstance(layout, dict) else None
+if not isinstance(right, list):
+    print(0)
+    raise SystemExit
+
+widgets = [entry for entry in right if not (isinstance(entry, dict) and entry.get("id") == plugin_id)]
+updated = []
+for index, entry in enumerate(widgets):
+    entry_id = entry.get("id") if isinstance(entry, dict) else None
+    previous_id = widgets[index - 1].get("id") if index and isinstance(widgets[index - 1], dict) else None
+    if index:
+        divider = None
+        if previous_id == "omarchy.clock" and entry_id == "io.github.dtpietrzak.battery-indicator":
+            divider = {"id": plugin_id, "before": 3, "after": 9}
+        elif previous_id == "io.github.dtpietrzak.battery-indicator" and entry_id == "io.github.dtpietrzak.quick-options":
+            divider = {"id": plugin_id, "before": 9, "after": 5}
+        if divider:
+            updated.append(divider)
+    updated.append(entry)
+
+if updated == right:
+    print(0)
+else:
+    layout["right"] = updated
+    path.write_text(json.dumps(config, indent=2, ensure_ascii=False) + "\n")
+    print(1)
+PY
+)"
+if [[ $plugin_files_changed -eq 1 ]]; then
+  echo "Installed the right-side spacing widget"
+else
+  echo "Right-side spacing widget already matches"
+fi
+if [[ $layout_changed -eq 1 ]]; then
+  echo "Added dividers between right-side bar widgets"
+fi
+
 echo "==> bar widgets"
 disable_plugin omarchy.indicators
 disable_plugin omarchy.elsewhen
