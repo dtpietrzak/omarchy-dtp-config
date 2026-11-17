@@ -99,7 +99,16 @@ local function remember(window)
   if (window.fullscreen or 0) ~= 0 or is_file_dialog(window.title) or is_file_dialog(window.initial_title) then
     return false
   end
+  -- A window filling the screen (omarchy-dtp-windows) keeps the size it had
+  -- before it filled, so the app does not next open filling the screen.
   local size = window.size
+  if hl._dtp_windows_unfilled_size then
+    local unfilled = hl._dtp_windows_unfilled_size(window)
+    if unfilled == false then
+      return false
+    end
+    size = unfilled or size
+  end
   if not size or size.x < 50 or size.y < 50 then
     return false
   end
