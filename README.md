@@ -10,7 +10,7 @@ The app list, the hidden dock, and the floating title-bar limits stay in their o
 
 - Cursor size 20. Omarchy's default is 24.
 - The mouse stays where it is when the workspace changes. Omarchy moves it to a window.
-- Touchpad: natural scroll, three-finger drag, scroll factor 0.05, double-tap-to-drag off, and the touchpad stays on while typing. Pointer acceleration is the macOS trackpad curve at tracking speed 0.875, sampled for this pad (97 units/mm) and the 2560x1600 panel at scale 2. Scroll stays on its own factor.
+- Touchpad: natural scroll, three-finger drag, scroll factor 0.025, double-tap-to-drag off, and the touchpad stays on while typing. Pointer acceleration is the macOS trackpad curve at tracking speed 0.875, sampled for this pad (97 units/mm) and the 2560x1600 panel at scale 2. Scroll stays on its own factor.
 - Four-finger horizontal swipe changes workspace.
 - Text size 10px, through `omarchy display text size`. Alacritty, Foot, and Kitty follow at 8pt. Ghostty stays at 10pt.
 - Bar on the bottom. Clock format `ddd d MMM h:mm AP`.

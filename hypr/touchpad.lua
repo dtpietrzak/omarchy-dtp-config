@@ -4,7 +4,7 @@ hl.config({
     touchpad = {
       drag_3fg = 1,
       -- Closer to macOS. Omarchy's default is 0.4.
-      scroll_factor = 0.05,
+      scroll_factor = 0.025,
       natural_scroll = true,
       disable_while_typing = false,
       -- A drag starts from a press and hold.

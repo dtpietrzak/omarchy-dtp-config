@@ -250,7 +250,7 @@ EOF
 reset_logs
 
 "$ROOT/install.sh" >/dev/null
-grep -q 'scroll_factor = 0.05,' "$INPUT" || fail "touchpad scroll factor was not written"
+grep -q 'scroll_factor = 0.025,' "$INPUT" || fail "touchpad scroll factor was not written"
 grep -q 'natural_scroll = true' "$INPUT" || fail "natural scroll was not written"
 grep -q 'tap_and_drag = false' "$INPUT" || fail "double-tap-to-drag was not turned off"
 grep -q 'custom 0.5124' "$INPUT" || fail "trackpad accel curve was not written"
@@ -374,7 +374,7 @@ EOF
 reset_logs
 "$ROOT/install.sh" >/dev/null
 grep -q 'tap_and_drag = false' "$INPUT" || fail "an older touchpad block did not turn off double-tap-to-drag"
-grep -q 'scroll_factor = 0.05,' "$INPUT" || fail "an older touchpad block kept the old scroll speed"
+grep -q 'scroll_factor = 0.025,' "$INPUT" || fail "an older touchpad block kept the old scroll speed"
 if grep -q 'scroll_factor = 0.3' "$INPUT"; then
   fail "an older touchpad block kept scroll factor 0.3"
 fi
